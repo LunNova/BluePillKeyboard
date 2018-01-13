@@ -1,0 +1,36 @@
+[package]
+authors = ["Ross Allan <ross@fabulousfabrications.uk>"]
+categories = ["embedded", "no-std"]
+description = "A template for building applications for ARM Cortex-M microcontrollers"
+keywords = ["arm", "cortex-m", "template"]
+license = "MIT OR Apache-2.0"
+name = "blue-pill-usb-keyboard"
+repository = "https://github.com/japaric/cortex-m-quickstart"
+version = "0.0.1"
+[dependencies]
+bare-metal = "0.1.1"
+cortex-m = "0.3.1"
+cortex-m-semihosting = "0.2.0"
+cortex-m-rtfm = "0.2.2"
+vcell = "*"
+
+[dependencies.blue-pill]
+git = "https://github.com/japaric/blue-pill.git"
+
+[dependencies.cortex-m-rt]
+features = ["abort-on-panic"]
+version = "0.3.3"
+
+[profile]
+[profile.dev]
+codegen-units = 1
+debug = true
+incremental = false
+lto = true
+opt-level = 0
+
+[profile.release]
+codegen-units = 1
+debug = true
+incremental = false
+lto = true

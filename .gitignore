@@ -1,0 +1,5 @@
+.gdb_history
+.idea/
+target/
+*.iml
+CMakeLists.txt
