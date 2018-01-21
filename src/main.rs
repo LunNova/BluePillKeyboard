@@ -3,11 +3,11 @@
 #![feature(core_intrinsics)]
 #![no_std]
 
+extern crate bare_metal;
+extern crate blue_pill;
+extern crate cortex_m;
 extern crate cortex_m_rtfm as rtfm; // <- this rename is required
 extern crate cortex_m_semihosting as semihosting;
-extern crate cortex_m;
-extern crate blue_pill;
-extern crate bare_metal;
 extern crate vcell;
 
 use blue_pill::stm32f103xx as device;
@@ -52,12 +52,38 @@ app! {
 }
 
 fn usb_interrupt(_t: &mut rtfm::Threshold, _r: CAN1_RX0::Resources) {
-
+    usb::usb_can1_rx0_interrupt(_t, _r, EventHandler{})
 }
 
-fn init(p: device::Peripherals, r: init::Resources) {
+struct EventHandler {}
+
+
+
+impl<'a> usb::UsbEventHandler<CAN1_RX0::Resources<'a>> for EventHandler {
+    fn get_device_descriptor(&self, resources: CAN1_RX0::Resources) -> &'static usb::UsbDeviceDescriptor {
+        static USB_DEVICE_DESCRIPTOR: usb::UsbDeviceDescriptor = usb::UsbDeviceDescriptor {
+            specification_version: usb::UsbVersion::new(1, 1, 0),
+            device_class: usb::UsbDeviceClass::HID as u8,
+            device_sub_class: 0,
+            device_protocol: 0,
+            max_packet_size_ep0: 0,
+            // http://pid.codes/1209/0001/
+            vendor_id: 0x1209,
+            product_id: 0x0001,
+            device_version: usb::UsbVersion::new(0, 0, 1),
+            manufacturer: usb::StandardStringIndex::None as u8,
+            product: usb::StandardStringIndex::None as u8,
+            serial_number: usb::StandardStringIndex::None as u8,
+            num_configurations: 0,
+        };
+        &USB_DEVICE_DESCRIPTOR
+    }
+}
+
+fn init(p: device::Peripherals, _r: init::Resources) {
     //let mut stdout = hio::hstdout().unwrap();
     //writeln!(stdout, "init").unwrap();
+    //r.USB =
     blue_pill::led::init(p.GPIOC, p.RCC);
     ludicrous_speed_now(p.RCC, p.FLASH);
     init_usb(p.RCC, p.USB);
@@ -69,14 +95,15 @@ fn init_usb(rcc: &device::RCC, usb: &device::USB) {
     rcc.apb2enr.modify(|_, w| w.iopaen().enabled());
 
     // enable usb clocks
-    rcc.apb1enr.modify( | _, w | w.usben().enabled());
-    rcc.apb1rstr.modify(| _, w | w.usbrst().set_bit());
-    rcc.apb1rstr.modify(| _, w | w.usbrst().clear_bit());
+    rcc.apb1enr.modify(|_, w| w.usben().enabled());
+    rcc.apb1rstr.modify(|_, w| w.usbrst().set_bit());
+    rcc.apb1rstr.modify(|_, w| w.usbrst().clear_bit());
 
     //gpioa.crh.read().cnf10();
 
     usb.istr.reset();
-    usb.ep0r.modify(| _, w | w.ep_type().control().ep_kind().clear_bit());
+    usb.ep0r
+        .modify(|_, w| w.ep_type().control().ep_kind().clear_bit());
     usb.btable.reset();
     usb.cntr.write(|w| w
         .fres().set_bit()
@@ -90,7 +117,7 @@ fn init_usb(rcc: &device::RCC, usb: &device::USB) {
     );
 
     // must wait tSTARTUP (1us) before reset
-    for _ in 0..(1<<16) {
+    for _ in 0..(1 << 16) {
         cortex_m::asm::nop();
     }
 
@@ -121,10 +148,12 @@ fn ludicrous_speed_now(rcc: &device::RCC, flash: &device::FLASH) {
     );
     rcc.cr.modify(|_, w| w.pllon().enabled());
     while rcc.cr.read().pllrdy().is_unlocked() {}
-    rcc.cfgr.modify(|_,w| w.sw().pll());
+    rcc.cfgr.modify(|_, w| w.sw().pll());
     while !rcc.cfgr.read().sws().is_pll() {}
 }
 
 fn idle() -> ! {
-    loop { rtfm::wfi(); }
+    loop {
+        rtfm::wfi();
+    }
 }

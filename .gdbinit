@@ -1,5 +1,4 @@
-target remote :3333
-
+define target hookpost-remote
 # print demangled symbols by default
 set print asm-demangle on
 
@@ -19,3 +18,6 @@ monitor arm semihosting enable
 
 load
 step
+end
+
+target remote :3333

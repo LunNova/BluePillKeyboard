@@ -1,9 +1,8 @@
-use super::device as device;
-use cortex_m;
+use super::device;
+use cortex_m::{self, asm};
 use bare_metal::Peripheral;
 use vcell::VolatileCell;
 use core;
-use core::marker::PhantomData;
 use rtfm;
 
 type EndpointIndex = u8;
@@ -18,7 +17,44 @@ const PMA: Peripheral<PMA> = unsafe { Peripheral::new(0x4000_6000) };
 // the descriptor part without the length and ID can be its own struct.
 #[repr(u8)]
 enum UsbDescriptorType {
-    DEVICE = 0
+    DEVICE = 0,
+}
+
+/// http://www.usb.org/developers/defined_class
+#[repr(u8)]
+pub enum UsbDeviceClass {
+    /// Use class information in the Interface Descriptors
+    None = 0,
+    Audio = 1,
+    CommunicationsAndCdcControl = 2,
+    HID = 3,
+    Physical = 5,
+    StillImaging = 6,
+    Printer = 7,
+    MassStorage = 8,
+    Hub = 9,
+    CdcData = 10,
+    SmartCard = 11,
+    ContentSecurity = 13,
+    Video = 15,
+    PersonalHealthcare = 16,
+    AudioVideo = 17,
+    Billboard = 18,
+    Diagnostic = 0xDC,
+    WirelessController = 0xE0,
+    Miscellaneous = 0xEF,
+    ApplicationSpecific = 0xFE,
+    VendorSpecific = 0xFF,
+}
+
+#[repr(u8)]
+/// String indexes with special meaning
+/// Other indexes have no special meaning according to the specification,
+/// but some operating systems do give specific string indexes special meaning
+pub enum StandardStringIndex {
+    None = 0,
+    /// https://docs.microsoft.com/en-us/windows-hardware/drivers/usbcon/microsoft-defined-usb-descriptors#why-does-windows-issue-a-string-descriptor-request-to-index-0xee
+    MicrosoftOsStringDescriptor = 0xEE
 }
 
 /*
@@ -52,20 +88,20 @@ impl <DescriptorType: UsbDescriptorTypeProvider> UsbDescriptorHeader<DescriptorT
 */
 
 #[repr(C, packed)]
-struct UsbDeviceDescriptor {
-    specification_version: UsbVersion,
-    device_class: u8,
-    device_sub_class: u8,
-    device_protocol: u8,
-    max_packet_size_ep0: u8,
-    vendor_id: u16,
-    product_id: u16,
-    device_version: UsbVersion,
+pub struct UsbDeviceDescriptor {
+    pub specification_version: UsbVersion,
+    pub device_class: u8,
+    pub device_sub_class: u8,
+    pub device_protocol: u8,
+    pub max_packet_size_ep0: u8,
+    pub vendor_id: u16,
+    pub product_id: u16,
+    pub device_version: UsbVersion,
     /// String table references
-    manufacturer: StringIndex,
-    product: StringIndex,
-    serial_number: StringIndex,
-    num_configurations: u8
+    pub manufacturer: StringIndex,
+    pub product: StringIndex,
+    pub serial_number: StringIndex,
+    pub num_configurations: u8,
 }
 
 #[repr(C, packed)]
@@ -76,7 +112,7 @@ struct UsbQualifierDescriptor {
     device_protocol: u8,
     max_packet_size_ep0: u8,
     num_configurations: u8,
-    reserved: u8
+    reserved: u8,
 }
 
 #[repr(C, packed)]
@@ -87,17 +123,19 @@ struct UsbConfigDescriptor {
     configuration_description: StringIndex,
     // TODO: should be bitflags!
     attributes: u8,
-    max_power: UsbPowerMilliAmps
+    max_power: UsbPowerMilliAmps,
 }
 
 #[repr(C, packed)]
 struct UsbPowerMilliAmps {
-    value: u8
+    value: u8,
 }
 
 impl UsbPowerMilliAmps {
     const fn new(milli_amps: u8) -> UsbPowerMilliAmps {
-        UsbPowerMilliAmps { value: milli_amps >> 1 }
+        UsbPowerMilliAmps {
+            value: milli_amps >> 1,
+        }
     }
 
     const fn milli_amps(&self) -> u8 {
@@ -106,27 +144,33 @@ impl UsbPowerMilliAmps {
 }
 
 #[repr(C, packed)]
-struct UsbVersion {
-    value: u16
+pub struct UsbVersion {
+    pub value: u16,
 }
 
+// TODO: bitfield! instead?
+// https://github.com/dzamlo/rust-bitfield
 impl UsbVersion {
     const MAJOR_POSITION: u16 = 8;
     const MINOR_POSITION: u16 = 4;
 
-    const fn new(major: u8, minor: u8, revision: u8) -> UsbVersion {
-        UsbVersion { value: ((major as u16 & 0xFFu16) << UsbVersion::MAJOR_POSITION) | ((minor as u16 & 0x0Fu16) << UsbVersion::MINOR_POSITION) | revision as u16 & 0x0fu16 }
+    pub const fn new(major: u8, minor: u8, revision: u8) -> UsbVersion {
+        UsbVersion {
+            value: ((major as u16 & 0xFFu16) << UsbVersion::MAJOR_POSITION)
+                | ((minor as u16 & 0x0Fu16) << UsbVersion::MINOR_POSITION)
+                | revision as u16 & 0x0fu16,
+        }
     }
 
-    const fn major(&self) -> u8 {
+    pub const fn major(&self) -> u8 {
         ((self.value & (0xFFu16 << UsbVersion::MAJOR_POSITION)) >> UsbVersion::MAJOR_POSITION) as u8
     }
 
-    const fn minor(&self) -> u8 {
+    pub const fn minor(&self) -> u8 {
         ((self.value & (0xFFu16 << UsbVersion::MINOR_POSITION)) >> UsbVersion::MINOR_POSITION) as u8
     }
 
-    const fn revision(&self) -> u8 {
+    pub const fn revision(&self) -> u8 {
         (self.value & 0xFFu16) as u8
     }
 }
@@ -141,67 +185,75 @@ fn get_ep(usb: &device::USB, ep: u8) -> &device::usb::EP0R {
     }
 }
 
-struct UsbDevice<Resources, EventHandler: UsbEventHandler<Resources>> {
-    event_handler: EventHandler,
-    phantom: PhantomData<*const Resources>
-}
-
 fn reset(usb: &device::USB) {
-    let pma: &mut PMA = unsafe { &mut*PMA.get() };
+    let pma: &mut PMA = unsafe { &mut *PMA.get() };
     for i in 0..ENDPOINTS {
-        get_ep(&usb, i).reset();
-        {
-            pma.set_rxaddr(i, 0);
-        }
-        {
-            pma.set_txaddr(i, 0);
-        }
+        get_ep(usb, i).reset();
+        pma.set_rxaddr(i, 0);
+        pma.set_txaddr(i, 0);
     }
     usb.daddr.reset();
 }
 
-impl <Resources, EventHandler: UsbEventHandler<Resources>> UsbDevice<Resources, EventHandler> {
-    fn usb_interrupt(&mut self, _t: &mut rtfm::Threshold, r: Resources) {
-        //let mut stdout = hio::hstdout().unwrap();
-        let usb: &device::USB = unsafe { &*device::USB.get() };
+pub fn usb_can1_rx0_interrupt<Resources, EventHandler: UsbEventHandler<Resources>>(_t: &mut rtfm::Threshold, r: Resources, e: EventHandler) {
+    //let mut stdout = hio::hstdout().unwrap();
+    let usb: &device::USB = unsafe { &*device::USB.get() };
 
-        //let pma: &mut PMA = unsafe { &mut*PMA.get() };
+    //let pma: &mut PMA = unsafe { &mut*PMA.get() };
 
-        let istr_read = usb.istr.read();
-
-        if istr_read.reset().bit_is_set() {
+    usb.istr.modify(|istr_r, istr_w| {
+        if istr_r.reset().bit_is_set() {
             // need to reset
             reset(usb);
-        } else {
-            let ep = get_ep(&usb, istr_read.ep_id().bits());
-
-            // CTR CORRECT TRANSFTER
-            if istr_read.ctr().bit_is_set() {
-                ep.modify(|ep_read, w| {
-                    if ep_read.ctr_rx().bit_is_set() {
-                        if ep_read.setup().bit_is_set() {
-                            // SETUP
-                            self.event_handler.get_device_descriptor(r);
-                        } else {
-                            // RX
-                        }
-                    } else if ep_read.ctr_rx().bit_is_set() {
-                        // TX
-                    } else {
-                        // Should be RX or TX, something went wrong?
-                        cortex_m::asm::bkpt();
-                    }
-                    w
-                });
-            }
+            return istr_w.reset().clear_bit();
         }
 
-        usb.istr.reset();
-    }
+        let ep = get_ep(usb, istr_r.ep_id().bits());
+
+        if istr_r.ctr().bit_is_set() {
+            // CTR Correct Transfer
+            ep.modify(|ep_read, w| {
+                if ep_read.ctr_rx().bit_is_set() {
+                    if ep_read.setup().bit_is_set() {
+                        // SETUP
+                        e.get_device_descriptor(r);
+                    } else {
+                        // RX
+                    }
+                } else if ep_read.ctr_rx().bit_is_set() {
+                    // TX
+                } else {
+                    // Should be RX or TX, something went wrong?
+                    cortex_m::asm::bkpt();
+                }
+                w
+            });
+
+            istr_w.ctr().clear_bit()
+        } else if istr_r.sof().bit_is_set() {
+            // SOF Start of Frame
+            // not a high speed device - should get keep-alive instead
+            // presumably (but not yet tested) keep-alive will set SOF
+            istr_w.sof().clear_bit()
+        } else if istr_r.wkup().bit_is_set() {
+            // WKUP Wakeup
+            istr_w.wkup().clear_bit()
+        } else if istr_r.susp().bit_is_set() {
+            // SUSP Suspend
+            istr_w.susp().clear_bit()
+        } else if istr_r.err().bit_is_set() {
+            // ERR Error
+            istr_w.err().clear_bit()
+        } else {
+            // Unknown?
+            asm::bkpt();
+            istr_w
+        }
+    });
 }
 
-trait UsbEventHandler<Resources> {
-    fn get_device_descriptor(&self, resources: Resources) -> UsbDeviceDescriptor;
+pub trait UsbEventHandler<Resources> {
+    fn get_device_descriptor(&self, resources: Resources) -> &'static UsbDeviceDescriptor;
 }
 
 // PMA def was from
@@ -226,15 +278,15 @@ impl PMA {
     // FIXME: We take &mut self to write - but stm32f crate's peripherals allow writing with non-mut reference...
     // why? should do same?
     #[inline(always)]
-    pub fn set_u16(&mut self, offset: u16, val: u16) {
+    pub fn set_u16(&mut self, offset: PmaAddress, val: u16) {
         //debug_assert_eq!((offset & 0x01), 0);
         self.words[offset as usize].set(val);
     }
 
     #[inline(always)]
-    const fn offset(ep: EndpointIndex) -> u16 {
+    const fn offset(ep: EndpointIndex) -> PmaAddress {
         //assert!(ep < ENDPOINTS);
-        ep as u16 * 8
+        ep as PmaAddress * 8
     }
 
     /// get USB_ADDRn_TX
@@ -300,12 +352,10 @@ impl PMA {
         }
     }
 
-
-
     pub fn get_next_buffer(&self, size: PmaAddress) -> PmaAddress {
         let mut result: PmaAddress = PMA_SIZE;
-        for i in 0 .. ENDPOINTS {
-            result = min_if_set(min_if_set(result, self.get_txaddr(i)), self.get_rxaddr(i));
+        for i in 0..ENDPOINTS {
+            result = min_non_zero(min_non_zero(result, self.get_txaddr(i)), self.get_rxaddr(i));
         }
         if result < size + PMA::offset(ENDPOINTS + 1) {
             panic!("Not enough space in PMA for buffer of size {}", size);
@@ -314,10 +364,11 @@ impl PMA {
     }
 }
 
-fn min_if_set(result: PmaAddress, addr: PmaAddress) -> PmaAddress {
-    if unsafe { core::intrinsics::likely(addr == 0 || result < addr) } {
-        return result;
+#[inline(always)]
+fn min_non_zero(result: PmaAddress, addr: PmaAddress) -> PmaAddress {
+    if addr == 0 || result < addr {
+        result
     } else {
-        return addr;
+        addr
     }
 }
