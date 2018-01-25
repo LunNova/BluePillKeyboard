@@ -1,8 +1,9 @@
+#![allow(dead_code)]
+
 use super::device;
 use cortex_m::{self, asm};
 use bare_metal::Peripheral;
 use vcell::VolatileCell;
-use core;
 use rtfm;
 
 type EndpointIndex = u8;
@@ -54,7 +55,7 @@ pub enum UsbDeviceClass {
 pub enum StandardStringIndex {
     None = 0,
     /// https://docs.microsoft.com/en-us/windows-hardware/drivers/usbcon/microsoft-defined-usb-descriptors#why-does-windows-issue-a-string-descriptor-request-to-index-0xee
-    MicrosoftOsStringDescriptor = 0xEE
+    MicrosoftOsStringDescriptor = 0xEE,
 }
 
 /*
@@ -195,9 +196,14 @@ fn reset(usb: &device::USB) {
     usb.daddr.reset();
 }
 
-pub fn usb_can1_rx0_interrupt<Resources, EventHandler: UsbEventHandler<Resources>>(_t: &mut rtfm::Threshold, r: Resources, e: EventHandler) {
+pub fn usb_can1_rx0_interrupt<Resources, EventHandler: UsbEventHandler<Resources>>(
+    _t: &mut rtfm::Threshold,
+    r: Resources,
+    e: EventHandler,
+) {
     //let mut stdout = hio::hstdout().unwrap();
-    let usb: &device::USB = unsafe { &*device::USB.get() };
+    // FIXME
+    let usb: &device::USB = unsafe { &*(1 as *const device::USB) };
 
     //let pma: &mut PMA = unsafe { &mut*PMA.get() };
 

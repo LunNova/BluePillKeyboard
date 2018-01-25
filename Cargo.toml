@@ -9,17 +9,17 @@ repository = "https://github.com/japaric/cortex-m-quickstart"
 version = "0.0.1"
 [dependencies]
 bare-metal = "0.1.1"
-cortex-m = "0.3.1"
+cortex-m = "0.4.2"
 cortex-m-semihosting = "0.2.0"
-cortex-m-rtfm = "0.2.2"
+cortex-m-rtfm = "0.3.1"
 vcell = "*"
 
-[dependencies.blue-pill]
-git = "https://github.com/japaric/blue-pill.git"
+[dependencies.stm32f103xx-hal]
+git = "https://github.com/japaric/stm32f103xx-hal.git"
 
 [dependencies.cortex-m-rt]
 features = ["abort-on-panic"]
-version = "0.3.3"
+version = "0.3.12"
 
 [profile]
 [profile.dev]

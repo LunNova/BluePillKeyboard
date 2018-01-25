@@ -4,14 +4,19 @@
 #![no_std]
 
 extern crate bare_metal;
-extern crate blue_pill;
 extern crate cortex_m;
+extern crate cortex_m_rt;
 extern crate cortex_m_rtfm as rtfm; // <- this rename is required
 extern crate cortex_m_semihosting as semihosting;
+extern crate stm32f103xx_hal as hal;
 extern crate vcell;
 
-use blue_pill::stm32f103xx as device;
+use hal::prelude::*;
+use hal::rcc::*;
+use hal::flash::*;
+use hal::stm32f103xx as device;
 use rtfm::app;
+use rtfm::Threshold;
 
 mod usb;
 
@@ -23,6 +28,7 @@ app! {
         // for peripherals which means we can declare a PMA peripheral:
         //
         static ON: bool = false;
+        static USB: device::USB;
     },
 
     tasks: {
@@ -51,16 +57,27 @@ app! {
     }
 }
 
+//TODO: matrix scan
+//systick
+//0.0ms on col 0
+//0.1ms scan row 0 off col 0
+//0.2ms on col 1
+//0.2ms scan row 0 off col 1
+// Splitting matrix scanning into pieces will keep time spent low enough to not interfere with USB
+// without needing different interrupt priorities and critical sections for tracking held keys
+// should keep things simple
+
 fn usb_interrupt(_t: &mut rtfm::Threshold, _r: CAN1_RX0::Resources) {
-    usb::usb_can1_rx0_interrupt(_t, _r, EventHandler{})
+    usb::usb_can1_rx0_interrupt(_t, _r, EventHandler {})
 }
 
 struct EventHandler {}
 
-
-
-impl<'a> usb::UsbEventHandler<CAN1_RX0::Resources<'a>> for EventHandler {
-    fn get_device_descriptor(&self, resources: CAN1_RX0::Resources) -> &'static usb::UsbDeviceDescriptor {
+impl usb::UsbEventHandler<CAN1_RX0::Resources> for EventHandler {
+    fn get_device_descriptor(
+        &self,
+        _resources: CAN1_RX0::Resources,
+    ) -> &'static usb::UsbDeviceDescriptor {
         static USB_DEVICE_DESCRIPTOR: usb::UsbDeviceDescriptor = usb::UsbDeviceDescriptor {
             specification_version: usb::UsbVersion::new(1, 1, 0),
             device_class: usb::UsbDeviceClass::HID as u8,
@@ -80,27 +97,49 @@ impl<'a> usb::UsbEventHandler<CAN1_RX0::Resources<'a>> for EventHandler {
     }
 }
 
-fn init(p: device::Peripherals, _r: init::Resources) {
+fn init(p: init::Peripherals, _r: init::Resources) -> init::LateResources {
     //let mut stdout = hio::hstdout().unwrap();
     //writeln!(stdout, "init").unwrap();
     //r.USB =
-    blue_pill::led::init(p.GPIOC, p.RCC);
-    ludicrous_speed_now(p.RCC, p.FLASH);
-    init_usb(p.RCC, p.USB);
+
+    // TODO: no API in HAL for this yet
+    p.device.RCC.apb1enr.modify(|_, w| w.usben().enabled());
+    p.device.RCC.apb1rstr.modify(|_, w| w.usbrst().set_bit());
+    p.device.RCC.apb1rstr.modify(|_, w| w.usbrst().clear_bit());
+
+    // should p.device.RCC.cfgr.freeze handle this?
+    // https://github.com/japaric/stm32f103xx-hal/issues/38
+    p.device.RCC.cr.modify(|_, w| w.hseon().enabled());
+    while !p.device.RCC.cr.read().hserdy().is_ready() {}
+    p.device
+        .RCC
+        .cfgr
+        .modify(|_, w| w.pllsrc().external().pllxtpre().no_div());
+
+    let mut flash: hal::flash::Parts = p.device.FLASH.constrain();
+    let mut rcc: hal::rcc::Rcc = p.device.RCC.constrain();
+    // enable IO port A clock
+    // (USB - and + on pins PA11/PA12 so need GPIO clock A on? maybe this isn't needed?)
+    // we definitely need it on to trigger usb reset by making USB DP low output for a short time
+    let _gpioa: hal::gpio::gpioa::Parts = p.device.GPIOA.split(&mut rcc.apb2);
+
+    let mut gpioc: hal::gpio::gpioc::Parts = p.device.GPIOC.split(&mut rcc.apb2);
+    gpioc.pc13.into_push_pull_output(&mut gpioc.crh);
+
+    let _clocks: Clocks = rcc.cfgr
+        .sysclk(72.mhz())
+        .hclk(72.mhz())
+        .pclk2(72.mhz())
+        .pclk1(36.mhz())
+        .freeze(&mut flash.acr);
+
+    //blue_pill::led::init(p.GPIOC, p.RCC);
+    //ludicrous_speed_now(&p.device.RCC, &p.device.FLASH);
+    init_usb(&p.device.USB);
+    init::LateResources { USB: p.device.USB }
 }
 
-fn init_usb(rcc: &device::RCC, usb: &device::USB) {
-    // enable IO port A clock (USB - and + on pins PA11/PA12 so need GPIO clock A on? maybe this isn't needed?)
-    // we definitely need it on to trigger usb reset by making USB DP low output for a short time
-    rcc.apb2enr.modify(|_, w| w.iopaen().enabled());
-
-    // enable usb clocks
-    rcc.apb1enr.modify(|_, w| w.usben().enabled());
-    rcc.apb1rstr.modify(|_, w| w.usbrst().set_bit());
-    rcc.apb1rstr.modify(|_, w| w.usbrst().clear_bit());
-
-    //gpioa.crh.read().cnf10();
-
+fn init_usb(usb: &device::USB) {
     usb.istr.reset();
     usb.ep0r
         .modify(|_, w| w.ep_type().control().ep_kind().clear_bit());
@@ -127,29 +166,6 @@ fn init_usb(rcc: &device::RCC, usb: &device::USB) {
 fn reset_usb(usb: &device::USB) {
     usb.cntr.modify(|_, w| w.fres().set_bit());
     usb.cntr.modify(|_, w| w.fres().clear_bit());
-    //usb.daddr.modify(| _, w | w.ef().set_bit());
-    //usb.ep0r.write(| w | w.)
-}
-
-/// Need to use external clock source + PLL to run at clock speed which allows USB
-fn ludicrous_speed_now(rcc: &device::RCC, flash: &device::FLASH) {
-    rcc.cr.modify(|_, w| w.hseon().enabled());
-    while !rcc.cr.read().hserdy().is_ready() {}
-    flash.acr.modify(|_, w| w.prftbe().enabled());
-    flash.acr.modify(|_, w| w.latency().two());
-    rcc.cfgr.modify(|_, w| w
-        .hpre().div1()
-        .ppre2().div1()
-        .ppre1().div2()
-        //.adcpre().bits(8)
-        .pllsrc().external()
-        .pllxtpre().div1()
-        .pllmul().mul9()
-    );
-    rcc.cr.modify(|_, w| w.pllon().enabled());
-    while rcc.cr.read().pllrdy().is_unlocked() {}
-    rcc.cfgr.modify(|_, w| w.sw().pll());
-    while !rcc.cfgr.read().sws().is_pll() {}
 }
 
 fn idle() -> ! {
