@@ -60,9 +60,9 @@ app! {
 //TODO: matrix scan
 //systick
 //0.0ms on col 0
-//0.1ms scan row 0 off col 0
+//0.1ms scan rows, off col 0
 //0.2ms on col 1
-//0.2ms scan row 0 off col 1
+//0.3ms scan rows, off col 1
 // Splitting matrix scanning into pieces will keep time spent low enough to not interfere with USB
 // without needing different interrupt priorities and critical sections for tracking held keys
 // should keep things simple
