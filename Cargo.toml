@@ -1,11 +1,12 @@
 [package]
 authors = ["Ross Allan <ross@fabulousfabrications.uk>"]
 categories = ["embedded", "no-std"]
-description = "A template for building applications for ARM Cortex-M microcontrollers"
-keywords = ["arm", "cortex-m", "template"]
-license = "MIT OR Apache-2.0"
-name = "blue-pill-usb-keyboard"
-repository = "https://github.com/japaric/cortex-m-quickstart"
+description = "USB Keyboard firmware for blue pill development board"
+keywords = ["arm", "cortex-m", "keyboard"]
+license = "Apache-2.0"
+
+name = "blue-pill-keyboard"
+repository = "https://github.com/nallar/BluePillKeyboard"
 version = "0.0.1"
 [dependencies]
 bare-metal = "0.1.1"

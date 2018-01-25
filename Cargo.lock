@@ -30,7 +30,7 @@ version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
-name = "blue-pill-usb-keyboard"
+name = "blue-pill-keyboard"
 version = "0.0.1"
 dependencies = [
  "bare-metal 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
